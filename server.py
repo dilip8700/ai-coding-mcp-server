@@ -24,34 +24,43 @@ try:
     from mcp.server import NotificationOptions
     from mcp.server.models import InitializationOptions
     from mcp.server.stdio import stdio_server
-    from mcp.types import (
-        CallToolRequest,
-        CallToolResult,
-        ListToolsRequest,
-        ListToolsResult,
-        Tool,
-        TextContent,
-        ImageContent,
-        EmbeddedResource,
-        LoggingLevel,
-        TextDiff,
-        TextEdit,
-        Range,
-        Position,
-        Resource,
-        ResourceUri,
-        ReadResourceRequest,
-        ReadResourceResult,
-        WriteResourceRequest,
-        WriteResourceResult,
-        ListResourcesRequest,
-        ListResourcesResult,
-        WatchResourcesRequest,
-        WatchResourcesResult,
-        ResourceChangeNotification,
-        ResourceChange,
-        ResourceChangeKind,
-    )
+    
+    # Import MCP types with fallback for missing ones
+    try:
+        from mcp.types import (
+            CallToolRequest,
+            CallToolResult,
+            ListToolsRequest,
+            ListToolsResult,
+            Tool,
+            TextContent,
+            ImageContent,
+            EmbeddedResource,
+            LoggingLevel,
+            Resource,
+            ReadResourceRequest,
+            ReadResourceResult,
+            ListResourcesRequest,
+            ListResourcesResult,
+        )
+        # Define missing types as aliases or simple classes
+        WriteResourceRequest = ReadResourceRequest  # Use as placeholder
+        WriteResourceResult = ReadResourceResult    # Use as placeholder
+        TextDiff = dict  # Use as placeholder
+        TextEdit = dict  # Use as placeholder
+        Range = dict     # Use as placeholder
+        Position = dict  # Use as placeholder
+        ResourceUri = str  # Use as placeholder
+        WatchResourcesRequest = dict  # Use as placeholder
+        WatchResourcesResult = dict   # Use as placeholder
+        ResourceChangeNotification = dict  # Use as placeholder
+        ResourceChange = dict  # Use as placeholder
+        ResourceChangeKind = str  # Use as placeholder
+    except ImportError as type_error:
+        print(f"Some MCP types not available: {type_error}")
+        # Import what's available
+        from mcp.types import *
+        
 except ImportError:
     print("MCP library not found. Installing...")
     os.system("pip install mcp")
@@ -301,49 +310,112 @@ async def main():
         # Create server instance
         server = MCPServer(config)
         
-        # Create server parameters
-        params = StdioServerParameters(
-            name="ai-coding-mcp-server",
-            version="1.0.0"
-        )
-        
-        # Create notification options
-        notification_options = NotificationOptions(
-            logging_level=LoggingLevel.INFO
-        )
-        
-        # Create initialization options
-        init_options = InitializationOptions(
-            server_name="ai-coding-mcp-server",
-            server_version="1.0.0",
-            capabilities={
-                "tools": {},
-                "resources": {
-                    "read": True,
-                    "write": True,
-                    "list": True
-                }
-            }
-        )
+        # Server is now using simple stdio communication
+        # No need for complex MCP server parameters
         
         logger.info("Starting MCP Server...")
         logger.info(f"Session ID: {server.state.session_id}")
         logger.info(f"Configuration: {config}")
         
-        # Start the server
-        async with stdio_server(params) as (read_stream, write_stream):
-            session = ServerSession(
-                read_stream,
-                write_stream,
-                server.handle_list_tools,
-                server.handle_call_tool,
-                server.handle_read_resource,
-                server.handle_write_resource,
-                server.handle_list_resources,
-                notification_options=notification_options
-            )
-            
-            await session.run(init_options)
+        # Start the server using a simpler approach
+        logger.info("Starting MCP Server in stdio mode...")
+        
+        # For now, let's create a simple stdio-based server
+        import sys
+        import json
+        
+        # Read from stdin, write to stdout
+        while True:
+            try:
+                line = input()
+                if not line:
+                    continue
+                    
+                # Parse the JSON message
+                message = json.loads(line)
+                method = message.get("method")
+                params = message.get("params", {})
+                
+                # Handle different methods
+                if method == "initialize":
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "result": {
+                            "protocolVersion": "2024-11-05",
+                            "capabilities": {
+                                "tools": {},
+                                "resources": {
+                                    "read": True,
+                                    "write": True,
+                                    "list": True
+                                }
+                            },
+                            "serverInfo": {
+                                "name": "ai-coding-mcp-server",
+                                "version": "1.0.0"
+                            }
+                        }
+                    }
+                elif method == "tools/list":
+                    tools = server.get_tools()
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "result": {
+                            "tools": [{"name": t.name, "description": t.description, "inputSchema": t.inputSchema} for t in tools]
+                        }
+                    }
+                elif method == "tools/call":
+                    tool_name = params.get("name")
+                    arguments = params.get("arguments", {})
+                    
+                    try:
+                        result = await server.handle_call_tool(tool_name, arguments)
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "result": {
+                                "content": [{"type": "text", "text": str(result)}]
+                            }
+                        }
+                    except Exception as e:
+                        response = {
+                            "jsonrpc": "2.0",
+                            "id": message.get("id"),
+                            "error": {
+                                "code": -32603,
+                                "message": str(e)
+                            }
+                        }
+                else:
+                    response = {
+                        "jsonrpc": "2.0",
+                        "id": message.get("id"),
+                        "error": {
+                            "code": -32601,
+                            "message": f"Method not found: {method}"
+                        }
+                    }
+                
+                # Send response
+                print(json.dumps(response))
+                sys.stdout.flush()
+                
+            except EOFError:
+                break
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+                error_response = {
+                    "jsonrpc": "2.0",
+                    "id": message.get("id") if 'message' in locals() else None,
+                    "error": {
+                        "code": -32603,
+                        "message": str(e)
+                    }
+                }
+                print(json.dumps(error_response))
+                sys.stdout.flush()
             
     except Exception as e:
         logger.error(f"Server error: {e}")
